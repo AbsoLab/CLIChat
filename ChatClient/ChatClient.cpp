@@ -14,7 +14,7 @@ void SetName(SOCKET hSock);
 
 unsigned WINAPI SendMsg(void* arg);
 unsigned WINAPI RecvMsg(void* arg);
-void ErrorHandling(char* msg);
+void ErrorHandling(const char* msg);
 
 char msg[BUF_SIZE];
 
