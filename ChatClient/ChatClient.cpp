@@ -109,7 +109,7 @@ unsigned WINAPI RecvMsg(void* arg)   // read thread main
     return 0;
 }
 
-void ErrorHandling(char* msg)
+void ErrorHandling(const char* msg)
 {
     fputs(msg, stderr);
     fputc('\n', stderr);
