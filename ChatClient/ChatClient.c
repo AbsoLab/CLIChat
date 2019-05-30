@@ -10,12 +10,12 @@
 #define BUF_SIZE 100
 #define NAME_SIZE 20
 
-void CheckName(void* arg);
+void SetName(SOCKET hSock);
+
 unsigned WINAPI SendMsg(void* arg);
 unsigned WINAPI RecvMsg(void* arg);
 void ErrorHandling(char* msg);
 
-char name[NAME_SIZE] = "[DEFAULT]";
 char msg[BUF_SIZE];
 
 int main(int argc, char* argv[])
@@ -25,7 +25,7 @@ int main(int argc, char* argv[])
     SOCKADDR_IN servAdr;
     HANDLE hSndThread, hRcvThread;
 
-    if (argc != 4) {
+    if (argc != 3) {
         printf("Usage : %s <IP> <port>\n", argv[0]);
         exit(1);
     }
@@ -33,8 +33,6 @@ int main(int argc, char* argv[])
     if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0)
         ErrorHandling("WSAStartup() error!");
 
-    sprintf(name, "%s", argv[3]);
-    
     hSock = socket(PF_INET, SOCK_STREAM, 0);
     memset(&servAdr, 0, sizeof(servAdr));
     servAdr.sin_family = AF_INET;
@@ -44,7 +42,7 @@ int main(int argc, char* argv[])
     if (connect(hSock, (SOCKADDR*)& servAdr, sizeof(servAdr)) == SOCKET_ERROR)
         ErrorHandling("connect() error");
 
-    CheckName((void*)& hSock);
+    SetName(hSock);
 
     hSndThread = (HANDLE)_beginthreadex(NULL, 0, SendMsg, (void*)& hSock, 0, NULL);
     hRcvThread = (HANDLE)_beginthreadex(NULL, 0, RecvMsg, (void*)& hSock, 0, NULL);
@@ -59,9 +57,8 @@ int main(int argc, char* argv[])
 }
 
 /*이미 존재하는 이름인지 확인*/
-void CheckName(void* arg) {
+void SetName(SOCKET hSock) {
 
-    SOCKET hSock = *((SOCKET*)arg);
     char receive[BUF_SIZE];
 
     while (1) {
@@ -87,8 +84,12 @@ unsigned WINAPI SendMsg(void* arg)   // send thread main
         if (!strcmp(msg, "q\n") || !strcmp(msg, "Q\n")) {
             closesocket(hSock);
             exit(0);
+        } else if (!strcmp(msg, "\n")) {
+
+        } else {
+
+            send(hSock, msg, strlen(msg), 0);
         }
-        send(hSock, msg, strlen(msg), 0);
     }
     return 0;
 }

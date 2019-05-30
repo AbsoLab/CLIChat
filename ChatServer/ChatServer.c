@@ -13,7 +13,7 @@
 
 unsigned WINAPI HandleClnt(void* arg);
 
-void SendMsg(char* msg, int len, SOCKET hClntSock);
+void SendMsg(char* msg, int len);
 void ErrorHandling(char* msg);
 
 void SendErr(SOCKET hClntSock);
@@ -22,13 +22,14 @@ void SendAllow(SOCKET hClntSock);
 int GetClientNum(SOCKET hClntSock);
 int CheckFunc(char* msg);
 void SendList(SOCKET hClntSock);
-void SendWhisper(char* msg, int len, int from);
+void SendWhisper(char* msg, int len, SOCKET hClntSock, char* from_name);
 
 int clntCnt = 0;
 HANDLE hMutex;
 
 struct Client {
     char name[NAME_SIZE];
+    char addr[NAME_SIZE];   // 123.567.901.345 15자리
     SOCKET clntSocks;
 } client[MAX_CLNT];
 
@@ -67,6 +68,7 @@ int main(int argc, char* argv[])
         hClntSock = accept(hServSock, (SOCKADDR*)& clntAdr, &clntAdrSz);
 
         WaitForSingleObject(hMutex, INFINITE);
+        strcpy(client[clntCnt].addr, inet_ntoa(clntAdr.sin_addr));
         client[clntCnt++].clntSocks = hClntSock;
         ReleaseMutex(hMutex);
 
@@ -85,22 +87,25 @@ unsigned WINAPI HandleClnt(void* arg)
 {
     SOCKET hClntSock = *((SOCKET*)arg);
     int strLen = 0, i;
-    int num = -1, check = 0;
+    int check = 0;
+    
+    char name[NAME_SIZE];
     char msg[BUF_SIZE];
+    char nameMsg[NAME_SIZE + 5 + BUF_SIZE];
 
     /*이름 설정*/
-    while ((strLen = recv(hClntSock, msg, sizeof(msg), 0)) != -1) {
-        msg[strLen] = '\0';
+    while ((strLen = recv(hClntSock, name, sizeof(name), 0)) != -1) {
+        name[strLen] = '\0';
 
         for (i = 0; i < clntCnt; ++i) {
-            if (strcmp(client[i].name, msg) == 0) {
+            if (strcmp(client[i].name, name) == 0) {
                 check = -1;
             }
         }
             
         if (check == 0) {
             WaitForSingleObject(hMutex, INFINITE);
-            strcpy(client[GetClientNum(hClntSock)].name, msg);
+            strcpy(client[GetClientNum(hClntSock)].name, name);
             ReleaseMutex(hMutex);
             SendAllow(hClntSock);
             break;
@@ -108,6 +113,10 @@ unsigned WINAPI HandleClnt(void* arg)
             SendErr(hClntSock);
         }
     }
+
+    /*채팅방 전체에 입장 알림*/
+    sprintf(msg, "***%s님께서 채팅방에 입장하셨습니다.*** \n", name);
+    SendMsg(msg, strlen(msg));
 
     while ((strLen = recv(hClntSock, msg, sizeof(msg), 0)) != -1) {
         msg[strLen] = '\0';
@@ -118,57 +127,19 @@ unsigned WINAPI HandleClnt(void* arg)
             break;
 
         case 2:
-            SendWhisper(msg, strLen, hClntSock);
+            SendWhisper(msg, strLen, hClntSock, name);
             break;
 
         default:
-            SendMsg(msg, strLen, hClntSock);
+            sprintf(nameMsg, "[%s] : %s", name, msg);
+            SendMsg(nameMsg, strlen(nameMsg));
             break;
         }
     }
-    printf("qq");
 
-    /*
-    strLen = recv(hClntSock, msg, sizeof(msg), 0);
-    msg[strLen] = '\0';
-
-    for (i = 0; i < clntCnt; ++i) {
-        if (strcmp(client[i].name, msg) == 0) {
-            check = -1;
-        }
-    }
-    if (check == -1) {
-
-        send(hClntSock, "X", 1, 0);
-
-    } else {
-
-        send(hClntSock, "O", 1, 0);
-        num = GetClientNum(hClntSock);
-        strcpy(client[num].name, msg);
-
-        while ((strLen = recv(hClntSock, msg, sizeof(msg), 0)) != 0) {
-
-            msg[strLen] = '\0';
-            
-            
-            
-            switch (CheckFunc(msg)) {
-            case 1:
-                SendList(hClntSock);
-                break;
-
-            case 2:
-                SendWhisper(msg, strLen, hClntSock);
-                break;
-
-            default:
-                SendMsg(msg, strLen, hClntSock);
-                break;
-            }
-        }
-    }
-    */
+    /*채팅방 전체에 퇴장 알림*/
+    sprintf(msg, "***%s님께서 채팅방에서 나가셨습니다.*** \n", name);
+    SendMsg(msg, strlen(msg));
 
     WaitForSingleObject(hMutex, INFINITE);
     
@@ -176,8 +147,10 @@ unsigned WINAPI HandleClnt(void* arg)
     {
         if (hClntSock  == client[i].clntSocks)
         {
-            while (i++ < clntCnt - 1)
+            while (i < clntCnt - 1) {
                 client[i] = client[i+1];
+                i++;
+            }
             break;
         }
     }
@@ -187,27 +160,33 @@ unsigned WINAPI HandleClnt(void* arg)
     return 0;
 }
 
-void SendMsg(char* msg, int len, SOCKET hClntSock)   // send to all
+void SendMsg(char* msg, int len)   // send to all
 {
     int i;
-    char nameMsg[NAME_SIZE + 5 + BUF_SIZE];
-    
 
     WaitForSingleObject(hMutex, INFINITE);
-    sprintf(nameMsg, "[%s] : %s", client[GetClientNum(hClntSock)].name, msg);
     for (i = 0; i < clntCnt; i++) {
-        send(client[i].clntSocks, nameMsg, strlen(nameMsg), 0);
+        send(client[i].clntSocks, msg, len, 0);
     }
     ReleaseMutex(hMutex);
 }
 
+SOCKET GetClientSock(char name[NAME_SIZE]) {
 
+    for (int i = 0; i < clntCnt; ++i) {
+        if (strcmp(client[i].name, name) == 0) {
+            return client[i].clntSocks;
+        }
+    }
+    return -1;
+}
 int GetClientNum(SOCKET hClntSock) {
     for (int i = 0; i < clntCnt; ++i) {
         if (client[i].clntSocks == hClntSock) {
             return i;
         }
     }
+    return -1;
 }
 
 /*추가기능 확인*/
@@ -229,34 +208,48 @@ int CheckFunc(char* msg) {
 /*이름 중복*/
 void SendErr(SOCKET hClntSock) {
     const char* err = "X";
-
-    WaitForSingleObject(hMutex, INFINITE);
     send(hClntSock, err, strlen(err), 0);
-    ReleaseMutex(hMutex);
 }
 void SendAllow(SOCKET hClntSock) {
     const char* err = "O";
-
-    WaitForSingleObject(hMutex, INFINITE);
     send(hClntSock, err, strlen(err), 0);
-    ReleaseMutex(hMutex);
 }
 
 /*회원 목록 보내기*/
 void SendList(SOCKET hClntSock) {
 
     char list_str[NAME_SIZE * MAX_CLNT] = {"\0",};
-    for (int i = 0; i < clntCnt; ++i) { 
-        sprintf(list_str, "%s%d: %s \n", list_str, i + 1, client[i].name);
-    }
     WaitForSingleObject(hMutex, INFINITE);
-    send(hClntSock, list_str, strlen(list_str), 0);
+    for (int i = 0; i < clntCnt; ++i) { 
+        sprintf(list_str, "%s%d: %s (%s) \n", list_str, i + 1, client[i].name, client[i].addr);
+    }
     ReleaseMutex(hMutex);
+    send(hClntSock, list_str, strlen(list_str), 0);
 }
 
 /*귓속말 보내기*/
-void SendWhisper(char* msg, int len, int from) {
+void SendWhisper(char* msg, int len, SOCKET hClntSock, char* from_name) {
 
+    char to_name[NAME_SIZE] = { 0, };
+    char nameMsg[8 + NAME_SIZE + 5 + BUF_SIZE] = { 0, };
+    char* token = NULL;
+    char delim[] = " \t\n\r";
+    
+    const char* response = "없는 이름입니다.";
+
+    strtok(msg, delim);
+    strcpy(to_name, strtok(NULL, delim));
+
+    sprintf(nameMsg, "[귓속말][%s] : %s", from_name, strtok(NULL, ""));
+    WaitForSingleObject(hMutex, INFINITE);
+    SOCKET to_clntSock = GetClientSock(to_name);
+    ReleaseMutex(hMutex);
+
+    if (to_clntSock == -1) {
+        send(hClntSock, response, strlen(response), 0);
+    } else {
+        send(to_clntSock, nameMsg, strlen(nameMsg), 0);
+    }
 }
 
 void ErrorHandling(char* msg)
