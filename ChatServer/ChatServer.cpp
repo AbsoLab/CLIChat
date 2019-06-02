@@ -13,6 +13,9 @@
 
 HANDLE hMutex;
 
+/*쓰레드 함수*/
+unsigned WINAPI HandleClnt(void* arg);
+
 /*클라이언트 설정*/
 class Client {
 
@@ -50,12 +53,13 @@ bool SetRecentlySender(SOCKET sock, SOCKET recently_sender);
 SOCKET GetClientSock(char* name);
 
 /*채팅 기능*/
-unsigned WINAPI HandleClnt(void* arg);      // 쓰레드 함수
 void SendMsg(char* msg, int len);           // 전체 메시지 전송
 int CheckFunc(char* msg);                   // 특수 기능 확인
 void SendList(SOCKET sock);                 // 회원 목록 전송
 void SendWhisper(char* msg, int len, SOCKET sock, char* from_name);     // 귓속말 전송
 void SendReply(char* msg, int len, SOCKET sock, char* from_name);       // 답장 전송
+void ChangeName(char* msg, int len, SOCKET from_sock, char* from_name); // 이름 변경
+void SendHelp(SOCKET sock);                 // 도움말 전송
 void ErrorHandling(const char* msg);
 
 
@@ -137,9 +141,12 @@ unsigned WINAPI HandleClnt(void* arg)
     }
 
     /*채팅방 전체에 입장 알림*/
-    sprintf(msg, "***%s님께서 채팅방에 입장하셨습니다.*** \n", name);
+    sprintf(msg, "\n***%s님께서 채팅방에 입장하셨습니다.*** \n\n", name);
     SendMsg(msg, strlen(msg));
 
+    sprintf(msg, "\n***채팅방에 오신걸 환영합니다. 도움말이 필요하시다면 /help를 쳐보세요.*** \n\n");
+    send(sock, msg, strlen(msg), 0);
+    
     while ((strLen = recv(sock, msg, sizeof(msg), 0)) != -1) {
 
         msg[strLen] = '\0';
@@ -155,6 +162,14 @@ unsigned WINAPI HandleClnt(void* arg)
 
         case 3:
             SendReply(msg, strLen, sock, name);
+            break;
+            
+        case 4:
+            ChangeName(msg, strLen, sock, name);
+            break;
+
+        case 5:
+            SendHelp(sock);
             break;
 
         default:
@@ -198,13 +213,6 @@ void SendMsg(char* msg, int len)   // send to all
     }
     ReleaseMutex(hMutex);
 }
-void ErrorHandling(const char* msg)
-{
-    fputs(msg, stderr);
-    fputc('\n', stderr);
-    exit(1);
-}
-
 
 /*존재하는 이름인지 확인한다.*/
 bool CheckName(char* name) {
@@ -320,6 +328,8 @@ int CheckFunc(char* msg) {
     else if (strcmp(token, "/list") == 0) result = 1;
     else if (strcmp(token, "/to") == 0) result = 2;
     else if (strcmp(token, "/r") == 0) result = 3;
+    else if (strcmp(token, "/change") == 0) result = 4;
+    else if (strcmp(token, "/help") == 0) result = 5;
     return result;
 }
 
@@ -329,18 +339,17 @@ void SendList(SOCKET sock) {
     char list_str[NAME_SIZE * MAX_CLNT] = { "\0", };
     WaitForSingleObject(hMutex, INFINITE);
     for (int i = 0; i < clntCnt; ++i) {
-        sprintf(list_str, "%s%d: %s (%s) (%d) \n", list_str, i + 1, clients[i].get_name(), clients[i].get_addr(), clients[i].get_recently_sender());
+        sprintf(list_str, "%s%d: %s (%s) \n", list_str, i + 1, clients[i].get_name(), clients[i].get_addr());
     }
     ReleaseMutex(hMutex);
     send(sock, list_str, strlen(list_str), 0);
 }
 
 /*귓속말 보내기*/
-void SendWhisper(char* msg, int len, SOCKET sock, char* from_name) {
+void SendWhisper(char* msg, int len, SOCKET from_sock, char* from_name) {
 
     char to_name[NAME_SIZE] = { 0, };
     char nameMsg[8 + NAME_SIZE + 5 + BUF_SIZE] = { 0, };
-    char* token = NULL;
     char delim[] = " \t\n\r";
 
     const char* response = "없는 사용자입니다.\n";
@@ -350,10 +359,10 @@ void SendWhisper(char* msg, int len, SOCKET sock, char* from_name) {
 
     sprintf(nameMsg, "[귓속말][%s] : %s", from_name, strtok(NULL, ""));
     SOCKET to_sock = GetClientSock(to_name);
-    SetRecentlySender(to_sock, sock);
+    SetRecentlySender(to_sock, from_sock);
 
     if (to_sock == -1) {
-        send(sock, response, strlen(response), 0);
+        send(from_sock, response, strlen(response), 0);
     } else {
         send(to_sock, nameMsg, strlen(nameMsg), 0);
     }
@@ -380,4 +389,42 @@ void SendReply(char* msg, int len, SOCKET from_sock, char* from_name) {
     } else {
         send(to_sock, nameMsg, strlen(nameMsg), 0);
     }
+}
+
+/*사용자 이름 변경*/
+void ChangeName(char* msg, int len, SOCKET sock, char* from_name) {
+
+    char new_name[NAME_SIZE];
+    char delim[] = " \t\n\r";
+
+    const char* response = "이미 존재하는 이름입니다. \n";
+
+    strtok(msg, delim);
+    strcpy(new_name, strtok(NULL, delim));
+    
+    if (CheckName(new_name)) {
+        // 성공
+        SetClientName(sock, new_name);
+        sprintf(msg, "%s님께서 %s(으)로 이름을 변경하셨습니다. \n", from_name, new_name);
+        strcpy(from_name, new_name);
+        SendMsg(msg, strlen(msg));
+    } else {
+        //실패
+        send(sock, response, strlen(response), 0);
+    }
+}
+
+/*도움말 보내기*/
+void SendHelp(SOCKET sock) {
+
+    const char* help_msg = " * 귓속말 : /to [이름] [메시지] \n * 답장 : /r [메시지] \n * 회원 목록 : /list \n * 이름 변경 : /change [이름] \n";
+    send(sock, help_msg, strlen(help_msg), 0);
+}
+
+/*에러 핸들링*/
+void ErrorHandling(const char* msg)
+{
+    fputs(msg, stderr);
+    fputc('\n', stderr);
+    exit(1);
 }

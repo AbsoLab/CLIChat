@@ -70,6 +70,8 @@ void SetName(SOCKET hSock) {
         if (receive[0] == 'O') {
             break;
         }
+
+        printf("이미 서버에 존재하는 이름입니다. 다른 이름을 입력 해 주세요. \n");
     }
     
     printf("로그인에 성공하였습니다. \n");
